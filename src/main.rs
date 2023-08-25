@@ -1,3 +1,5 @@
+use bevy::prelude::*;
+
 fn main() {
-    println!("こんにちは世界！");
+    App::new().run();
 }
