@@ -4,15 +4,32 @@ use shogi::{bitboard::Factory, Move, Piece, PieceType, Position, Square};
 
 use crate::materials::BoardMaterial;
 
-#[derive(Resource, Deref, DerefMut)]
-pub struct Board(pub Position);
+#[derive(Resource)]
+pub struct Board {
+    pub state: Position,
+    pub scale: f32,
+}
 
 impl Default for Board {
     fn default() -> Self {
         let mut pos = Position::new();
         pos.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
             .unwrap();
-        Board(pos)
+        Board {
+            state: pos,
+            scale: 32.,
+        }
+    }
+}
+
+impl Board {
+    /// Get the world position of a given square
+    pub fn cell_transform(&self, square: &Square) -> Vec2 {
+        let cell_size = self.scale / 2.;
+
+        let x = (8. - square.file() as f32) * self.scale - self.scale * 9. / 2. + cell_size;
+        let y = (8. - square.rank() as f32) * self.scale - self.scale * 9. / 2. + cell_size;
+        Vec2::new(x, y)
     }
 }
 
@@ -21,7 +38,8 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Board>()
-            .add_systems(Startup, (render_game_board, render_game_pieces));
+            .add_systems(Startup, (render_game_board, render_game_pieces))
+            .add_systems(Update, (board_gizmo));
     }
 }
 
@@ -34,7 +52,7 @@ fn render_game_board(
 
     cmd.spawn((MaterialMesh2dBundle {
         mesh: mesh_handle.into(),
-        transform: Transform::default().with_scale(Vec3::splat(256.)),
+        transform: Transform::default().with_scale(Vec3::splat(32. * 9.)),
         material: materials.add(BoardMaterial {
             base_color: Color::BEIGE,
             grid_color: Color::BLUE,
@@ -46,11 +64,12 @@ fn render_game_board(
 }
 
 fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
+    return;
     // TODO make board resource that gets us position from file and rank
     let board_scale = 256.;
 
     for square in Square::iter() {
-        if let Some(piece) = board.piece_at(square) {
+        if let Some(piece) = board.state.piece_at(square) {
             let handle = server.load(format!("sprites/{}", piece_to_sprite(piece)));
 
             let x_pos = (9. - square.file() as f32) / 9. * board_scale - board_scale / 2.;
@@ -65,6 +84,12 @@ fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetSer
                 ..default()
             });
         }
+    }
+}
+
+fn board_gizmo(mut gizmos: Gizmos, board: Res<Board>) {
+    for square in Square::iter() {
+        gizmos.circle_2d(board.cell_transform(&square), 10., Color::RED);
     }
 }
 
