@@ -1,6 +1,9 @@
 mod materials;
 
-use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
+use std::time::Duration;
+
+use bevy::{asset::ChangeWatcher, prelude::*, sprite::MaterialMesh2dBundle};
+use bevy_mod_picking::prelude::*;
 use materials::{BoardMaterial, MyMaterialPlugin};
 use shogi::{bitboard::Factory, Move, Position};
 
@@ -18,8 +21,14 @@ impl Board {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (setup, render_game_board))
+        .add_plugins((
+            DefaultPlugins.set(AssetPlugin {
+                asset_folder: "assets".into(),
+                watch_for_changes: ChangeWatcher::with_delay(Duration::from_secs(1)),
+            }),
+            DefaultPickingPlugins,
+        ))
+        .add_systems(Startup, (setup, setup_cam, render_game_board))
         .add_plugins((MyMaterialPlugin))
         // .add_systems(Update, ())
         .run();
@@ -27,8 +36,10 @@ fn main() {
 
 fn setup(mut cmd: Commands) {
     cmd.insert_resource(Board::new());
+}
 
-    cmd.spawn(Camera2dBundle::default());
+fn setup_cam(mut cmd: Commands) {
+    cmd.spawn((Camera2dBundle::default(),));
 }
 
 fn render_game_board(
@@ -38,13 +49,18 @@ fn render_game_board(
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad { ..default() }));
 
-    cmd.spawn(MaterialMesh2dBundle {
-        mesh: mesh_handle.into(),
-        transform: Transform::default().with_scale(Vec3::splat(128.)),
-        material: materials.add(BoardMaterial {
-            base_color: Color::BEIGE,
-            grid_color: Color::BLUE,
-        }),
-        ..default()
-    });
+    cmd.spawn((
+        MaterialMesh2dBundle {
+            mesh: mesh_handle.into(),
+            transform: Transform::default().with_scale(Vec3::splat(256.)),
+            material: materials.add(BoardMaterial {
+                base_color: Color::BEIGE,
+                grid_color: Color::BLUE,
+                rows: 9,
+                columns: 9,
+            }),
+            ..default()
+        },
+        PickableBundle::default(),
+    ));
 }

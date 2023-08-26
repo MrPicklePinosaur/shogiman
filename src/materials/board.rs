@@ -16,6 +16,12 @@ pub struct BoardMaterial {
     /// Color of the board grid lines
     #[uniform(0)]
     pub grid_color: Color,
+
+    #[uniform(0)]
+    pub rows: u32,
+
+    #[uniform(0)]
+    pub columns: u32,
 }
 
 impl Material2d for BoardMaterial {
