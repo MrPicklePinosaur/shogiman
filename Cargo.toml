@@ -11,13 +11,11 @@ repository = "https://github.com/MrPicklePinosaur/shogiman"
 
 [dependencies]
 
-bevy_mod_picking = { version = "0.15", default-features = false, features = [ "selection" ] }
+# bevy_mod_picking = { version = "0.15", default-features = false, features = [ "selection" ] }
 
 shogi = { version = "0.12" }
 
 anyhow = { version = "1" }
-env_logger = { version = "0.9" }
-log = { version = "0.4" }
 
 [dependencies.bevy]
 version = "0.11"
