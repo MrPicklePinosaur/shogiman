@@ -47,12 +47,13 @@ fn render_game_board(
     mut cmd: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BoardMaterial>>,
+    board: Res<Board>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad { ..default() }));
 
     cmd.spawn((MaterialMesh2dBundle {
         mesh: mesh_handle.into(),
-        transform: Transform::default().with_scale(Vec3::splat(32. * 9.)),
+        transform: Transform::default().with_scale(Vec3::splat(board.scale * 9.)),
         material: materials.add(BoardMaterial {
             base_color: Color::BEIGE,
             grid_color: Color::BLUE,
@@ -64,23 +65,18 @@ fn render_game_board(
 }
 
 fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
-    return;
     // TODO make board resource that gets us position from file and rank
-    let board_scale = 256.;
 
     for square in Square::iter() {
         if let Some(piece) = board.state.piece_at(square) {
             let handle = server.load(format!("sprites/{}", piece_to_sprite(piece)));
 
-            let x_pos = (9. - square.file() as f32) / 9. * board_scale - board_scale / 2.;
-            let y_pos = (9. - square.rank() as f32) / 9. * board_scale - board_scale;
             cmd.spawn(Svg2dBundle {
                 svg: handle,
-                origin: Origin::BottomLeft,
+                origin: Origin::TopLeft,
                 transform: Transform::default()
                     // TODO proper 2d render order
-                    .with_translation(Vec3::new(x_pos, y_pos, 1.0))
-                    .with_scale(Vec3::splat(1.0)),
+                    .with_translation(board.cell_transform(&square).extend(1.0)),
                 ..default()
             });
         }
