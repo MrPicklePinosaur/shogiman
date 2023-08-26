@@ -4,6 +4,9 @@ default: debug
 debug:
     cargo run
 
+check:
+    cargo check --workspace
+
 devsetup:
     cp dev/hooks/* .git/hooks
 
