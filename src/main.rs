@@ -1,6 +1,7 @@
-mod shaders;
+mod materials;
 
 use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
+use materials::{BoardMaterial, MyMaterialPlugin};
 use shogi::{bitboard::Factory, Move, Position};
 
 #[derive(Resource, Deref, DerefMut)]
@@ -19,6 +20,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, (setup, render_game_board))
+        .add_plugins((MyMaterialPlugin))
         // .add_systems(Update, ())
         .run();
 }
@@ -32,14 +34,17 @@ fn setup(mut cmd: Commands) {
 fn render_game_board(
     mut cmd: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut materials: ResMut<Assets<BoardMaterial>>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad { ..default() }));
 
     cmd.spawn(MaterialMesh2dBundle {
         mesh: mesh_handle.into(),
         transform: Transform::default().with_scale(Vec3::splat(128.)),
-        material: materials.add(ColorMaterial::from(Color::PURPLE)),
+        material: materials.add(BoardMaterial {
+            base_color: Color::BEIGE,
+            grid_color: Color::BLUE,
+        }),
         ..default()
     });
 }
