@@ -18,6 +18,7 @@ fn main() {
                 filter: "shogiman=debug".into(),
                 level: bevy::log::Level::WARN,
             }),))
+        .add_plugins((bevy_svg::prelude::SvgPlugin))
         .add_plugins((BoardPlugin))
         .add_systems(Startup, (setup_cam))
         .add_plugins((MyMaterialPlugin))
