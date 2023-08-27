@@ -1,6 +1,7 @@
 use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
+use bevy_mod_picking::prelude::*;
 use bevy_svg::prelude::*;
-use shogi::{bitboard::Factory, Move, Piece, PieceType, Position, Square};
+use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
 
 use crate::materials::BoardMaterial;
 
@@ -49,19 +50,49 @@ fn render_game_board(
     mut materials: ResMut<Assets<BoardMaterial>>,
     board: Res<Board>,
 ) {
-    let mesh_handle = meshes.add(Mesh::from(shape::Quad { ..default() }));
-
-    cmd.spawn((MaterialMesh2dBundle {
-        mesh: mesh_handle.into(),
-        transform: Transform::default().with_scale(Vec3::splat(board.scale * 9.)),
-        material: materials.add(BoardMaterial {
-            base_color: Color::BEIGE,
-            grid_color: Color::BLUE,
-            rows: 9,
-            columns: 9,
-        }),
+    let mesh_handle = meshes.add(Mesh::from(shape::Quad {
+        size: Vec2::splat(board.scale * 9.),
         ..default()
-    },));
+    }));
+
+    cmd.spawn((
+        MaterialMesh2dBundle {
+            mesh: mesh_handle.into(),
+            material: materials.add(BoardMaterial {
+                base_color: Color::BEIGE,
+                grid_color: Color::BLUE,
+                rows: 9,
+                columns: 9,
+            }),
+            ..default()
+        },
+        PickableBundle::default(),
+        RaycastPickTarget::default(),
+        On::<Pointer<Move>>::run(on_hover),
+        On::<Pointer<Click>>::run(on_click),
+    ));
+}
+
+fn on_hover(evt: Listener<Pointer<Move>>, q: Query<(Entity, &Transform)>, board: Res<Board>) {
+    if let Some(pos) = evt.hit.position {
+        if let Ok(transform) = q.get_component::<Transform>(evt.target) {
+            // hit position in local space
+            let local_trans = transform.compute_matrix().inverse().transform_point3(pos);
+
+            // hit position with bottom right as handle
+            let offset_trans = local_trans.truncate() + Vec2::splat(board.scale * 9. / 2.);
+
+            debug!("local {offset_trans:?}");
+
+            // find out which grid square cursor is on
+            // let raw_pos = (transform.translation - pos).truncate() - Vec2::splat(board.scale * 9. / 2.);
+            // debug!("raw pos {raw_pos:?}");
+        }
+    }
+}
+
+fn on_click(evt: Listener<Pointer<Click>>) {
+    // debug!("on hover event {evt:?}");
 }
 
 fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
