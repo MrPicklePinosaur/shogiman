@@ -4,7 +4,8 @@ struct BoardMaterial {
     board_color: vec4<f32>,
     grid_color: vec4<f32>,
     rows: u32,
-    columns: u32
+    columns: u32,
+    // cell_colors: array<u32, 81>,
 };
 
 @group(1) @binding(0)

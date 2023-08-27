@@ -22,6 +22,12 @@ pub struct BoardMaterial {
 
     #[uniform(0)]
     pub columns: u32,
+    // /// Individual cell colors
+    // /// first bit: unhighlight
+    // /// second bit: highlight
+    // /// NOTE: using array length of 84 to ensure stride length is multiple of 16
+    // #[uniform(0)]
+    // pub cell_colors: [u32; 81],
 }
 
 impl Material2d for BoardMaterial {

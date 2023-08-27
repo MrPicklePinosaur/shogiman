@@ -1,4 +1,7 @@
-use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
+use bevy::{
+    input::keyboard::KeyboardInput, prelude::*, render::extract_resource::ExtractResource,
+    sprite::MaterialMesh2dBundle,
+};
 use bevy_mod_picking::prelude::*;
 use bevy_svg::prelude::*;
 use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
@@ -34,13 +37,26 @@ impl Board {
     }
 }
 
+/// Highlight cells in the grid
+// #[derive(ExtractResource, Clone)]
+// pub struct BoardHighlight {
+//     pub cells: [u32; 81]
+// }
+
 pub struct BoardPlugin;
 
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Board>()
             .add_systems(Startup, (render_game_board, render_game_pieces))
-            .add_systems(Update, (board_gizmo));
+            .add_systems(
+                Update,
+                (
+                    board_gizmo,
+                    highlight_board
+                        .run_if(|input: Res<Input<KeyCode>>| input.just_pressed(KeyCode::P)),
+                ),
+            );
     }
 }
 
@@ -55,6 +71,8 @@ fn render_game_board(
         ..default()
     }));
 
+    let cell_colors: [u32; 81] = [0; 81];
+
     cmd.spawn((
         MaterialMesh2dBundle {
             mesh: mesh_handle.into(),
@@ -63,6 +81,7 @@ fn render_game_board(
                 grid_color: Color::BLUE,
                 rows: 9,
                 columns: 9,
+                // cell_colors,
             }),
             ..default()
         },
@@ -71,6 +90,18 @@ fn render_game_board(
         On::<Pointer<Move>>::run(on_hover),
         On::<Pointer<Click>>::run(on_click),
     ));
+}
+
+fn highlight_board(
+    mut q: Query<&mut Handle<BoardMaterial>>,
+    mut materials: ResMut<Assets<BoardMaterial>>,
+) {
+    debug!("P pressed");
+    for mut mat_handle in q.iter_mut() {
+        if let Some(mat) = materials.get_mut(&mut *mat_handle) {
+            mat.base_color = Color::RED;
+        }
+    }
 }
 
 fn on_hover(evt: Listener<Pointer<Move>>, q: Query<(Entity, &Transform)>, board: Res<Board>) {
@@ -83,6 +114,9 @@ fn on_hover(evt: Listener<Pointer<Move>>, q: Query<(Entity, &Transform)>, board:
             let offset_trans = local_trans.truncate() + Vec2::splat(board.scale * 9. / 2.);
 
             debug!("local {offset_trans:?}");
+
+            // NOTE need to convert to shogi coords (top right) if we need to interact with the
+            // board state
 
             // find out which grid square cursor is on
             // let raw_pos = (transform.translation - pos).truncate() - Vec2::splat(board.scale * 9. / 2.);
@@ -102,14 +136,20 @@ fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetSer
         if let Some(piece) = board.state.piece_at(square) {
             let handle = server.load(format!("sprites/{}", piece_to_sprite(piece)));
 
-            cmd.spawn(Svg2dBundle {
-                svg: handle,
-                origin: Origin::TopLeft,
-                transform: Transform::default()
-                    // TODO proper 2d render order
-                    .with_translation(board.cell_transform(&square).extend(1.0)),
-                ..default()
-            });
+            cmd.spawn((
+                Svg2dBundle {
+                    svg: handle,
+                    origin: Origin::TopLeft,
+                    transform: Transform::default()
+                        // TODO proper 2d render order
+                        .with_translation(board.cell_transform(&square).extend(1.0)),
+                    ..default()
+                },
+                PickableBundle::default(),
+                RaycastPickTarget::default(),
+                // On::<Pointer<Drag>>::target_component_mut::<Transform>(|drag, transform| {
+                // }),
+            ));
         }
     }
 }
