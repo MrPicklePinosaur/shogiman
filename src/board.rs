@@ -14,6 +14,16 @@ pub struct Board {
     pub scale: f32,
 }
 
+#[derive(Resource, Default)]
+pub struct ColorPalette {
+    pub base: Handle<ColorMaterial>,
+    pub hover: Handle<ColorMaterial>,
+}
+
+/// Wrapper component for shogi square
+#[derive(Component, Deref, DerefMut)]
+pub struct BoardSquare(pub Square);
+
 impl Default for Board {
     fn default() -> Self {
         let mut pos = Position::new();
@@ -48,7 +58,11 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Board>()
-            .add_systems(Startup, (render_game_board, render_game_pieces))
+            .init_resource::<ColorPalette>()
+            .add_systems(
+                Startup,
+                (init_materials, render_game_board, render_game_pieces),
+            )
             .add_systems(
                 Update,
                 (
@@ -60,10 +74,25 @@ impl Plugin for BoardPlugin {
     }
 }
 
+fn init_materials(
+    mut color_palette: ResMut<ColorPalette>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    color_palette.base = materials.add(ColorMaterial {
+        color: Color::BEIGE,
+        ..default()
+    });
+
+    color_palette.hover = materials.add(ColorMaterial {
+        color: Color::BLUE,
+        ..default()
+    });
+}
+
 fn render_game_board(
     mut cmd: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    color_palette: Res<ColorPalette>,
     board: Res<Board>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad {
@@ -71,25 +100,26 @@ fn render_game_board(
         ..default()
     }));
 
-    let material = materials.add(ColorMaterial {
-        color: Color::BEIGE,
-        ..default()
-    });
-
     // TODO would be cool to batch this
     for square in Square::iter() {
-        cmd.spawn((
-            MaterialMesh2dBundle {
-                mesh: mesh_handle.clone().into(),
-                material: material.clone(),
-                transform: Transform::from_translation(board.cell_transform(&square).extend(0.)),
-                ..default()
-            },
-            PickableBundle::default(),
-            RaycastPickTarget::default(),
-            On::<Pointer<Move>>::run(on_hover),
-            On::<Pointer<Click>>::run(on_click),
-        ));
+        let square_entity = cmd
+            .spawn((
+                MaterialMesh2dBundle {
+                    mesh: mesh_handle.clone().into(),
+                    material: color_palette.base.clone(),
+                    transform: Transform::from_translation(
+                        board.cell_transform(&square).extend(0.),
+                    ),
+                    ..default()
+                },
+                PickableBundle::default(),
+                RaycastPickTarget::default(),
+                On::<Pointer<Over>>::run(on_move_in),
+                On::<Pointer<Out>>::run(on_move_out),
+                On::<Pointer<Click>>::run(on_click),
+                BoardSquare(square),
+            ))
+            .id();
     }
 }
 
@@ -105,25 +135,12 @@ fn highlight_board(
     }
 }
 
-fn on_hover(evt: Listener<Pointer<Move>>, q: Query<(Entity, &Transform)>, board: Res<Board>) {
-    if let Some(pos) = evt.hit.position {
-        if let Ok(transform) = q.get_component::<Transform>(evt.target) {
-            // hit position in local space
-            let local_trans = transform.compute_matrix().inverse().transform_point3(pos);
+fn on_move_in(evt: Listener<Pointer<Over>>, mut cmd: Commands, color_palette: Res<ColorPalette>) {
+    cmd.entity(evt.target).insert(color_palette.hover.clone());
+}
 
-            // hit position with bottom right as handle
-            let offset_trans = local_trans.truncate() + Vec2::splat(board.scale * 9. / 2.);
-
-            // debug!("local {offset_trans:?}");
-
-            // NOTE need to convert to shogi coords (top right) if we need to interact with the
-            // board state
-
-            // find out which grid square cursor is on
-            // let raw_pos = (transform.translation - pos).truncate() - Vec2::splat(board.scale * 9. / 2.);
-            // debug!("raw pos {raw_pos:?}");
-        }
-    }
+fn on_move_out(evt: Listener<Pointer<Out>>, mut cmd: Commands, color_palette: Res<ColorPalette>) {
+    cmd.entity(evt.target).insert(color_palette.base.clone());
 }
 
 fn on_click(evt: Listener<Pointer<Click>>) {
