@@ -8,24 +8,37 @@ use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
 
 use crate::materials::BoardMaterial;
 
-#[derive(Resource)]
+/// Use to decide what color the cell should be
+#[derive(Debug, Component, Default)]
+pub struct CellHighlighter {
+    /// Is the mouse hovering over the cell
+    pub is_hovered: bool,
+    /// Is the cell a potential position to move to
+    pub is_move_target: bool,
+}
+
+#[derive(Debug, Resource)]
 pub struct Board {
     pub state: Position,
     pub scale: f32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct ColorPalette {
     pub base: Handle<ColorMaterial>,
     pub hover: Handle<ColorMaterial>,
+    pub move_target: Handle<ColorMaterial>,
 }
 
 /// Wrapper component for shogi square
-#[derive(Component, Deref, DerefMut)]
+#[derive(Debug, Component, Deref, DerefMut)]
 pub struct BoardSquare(pub Square);
 
 impl Default for Board {
     fn default() -> Self {
+        // TODO might be issue if this gets called twice?
+        Factory::init();
+
         let mut pos = Position::new();
         pos.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
             .unwrap();
@@ -69,6 +82,7 @@ impl Plugin for BoardPlugin {
                     board_gizmo,
                     highlight_board
                         .run_if(|input: Res<Input<KeyCode>>| input.just_pressed(KeyCode::P)),
+                    cell_highlighter,
                 ),
             );
     }
@@ -85,6 +99,11 @@ fn init_materials(
 
     color_palette.hover = materials.add(ColorMaterial {
         color: Color::BLUE,
+        ..default()
+    });
+
+    color_palette.move_target = materials.add(ColorMaterial {
+        color: Color::RED,
         ..default()
     });
 }
@@ -118,6 +137,7 @@ fn render_game_board(
                 On::<Pointer<Out>>::run(on_move_out),
                 On::<Pointer<Click>>::run(on_click),
                 BoardSquare(square),
+                CellHighlighter::default(),
             ))
             .id();
     }
@@ -135,16 +155,52 @@ fn highlight_board(
     }
 }
 
-fn on_move_in(evt: Listener<Pointer<Over>>, mut cmd: Commands, color_palette: Res<ColorPalette>) {
-    cmd.entity(evt.target).insert(color_palette.hover.clone());
+fn on_move_in(evt: Listener<Pointer<Over>>, mut q: Query<(Entity, &mut CellHighlighter)>) {
+    let mut hl = q.get_component_mut::<CellHighlighter>(evt.target).unwrap();
+    hl.is_hovered = true;
 }
 
-fn on_move_out(evt: Listener<Pointer<Out>>, mut cmd: Commands, color_palette: Res<ColorPalette>) {
-    cmd.entity(evt.target).insert(color_palette.base.clone());
+fn on_move_out(evt: Listener<Pointer<Out>>, mut q: Query<(Entity, &mut CellHighlighter)>) {
+    let mut hl = q.get_component_mut::<CellHighlighter>(evt.target).unwrap();
+    hl.is_hovered = false;
 }
 
-fn on_click(evt: Listener<Pointer<Click>>) {
-    // debug!("on hover event {evt:?}");
+fn cell_highlighter(
+    mut cmd: Commands,
+    q: Query<(Entity, &CellHighlighter), (Changed<CellHighlighter>)>,
+    color_palette: Res<ColorPalette>,
+) {
+    for (entity, hl) in &q {
+        if hl.is_move_target {
+            cmd.entity(entity).insert(color_palette.move_target.clone());
+        } else if hl.is_hovered {
+            cmd.entity(entity).insert(color_palette.hover.clone());
+        } else {
+            cmd.entity(entity).insert(color_palette.base.clone());
+        }
+    }
+}
+
+fn on_click(evt: Listener<Pointer<Click>>, q: Query<(Entity, &BoardSquare)>, board: Res<Board>) {
+    debug!("on hover event {evt:?}");
+
+    // fetch the piece that is in the square
+    // TODO failable systems would be nice
+    let board_square = q.get_component::<BoardSquare>(evt.target).unwrap();
+    if let Some(piece) = board.state.piece_at(**board_square) {
+        debug!("clicked on {piece:?}");
+
+        debug!("the side to move is {:?}", board.state.side_to_move());
+
+        debug!("sqaure {board_square:?} piece {piece:?}");
+
+        // draw an indictor for where the piece is allowed to move
+        let moves = board.state.move_candidates(**board_square, *piece);
+
+        for square in moves.into_iter() {
+            debug!("square {square:?}");
+        }
+    }
 }
 
 fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
@@ -160,7 +216,10 @@ fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetSer
                     origin: Origin::TopLeft,
                     transform: Transform::default()
                         // TODO proper 2d render order
-                        .with_translation(board.cell_transform(&square).extend(1.0)),
+                        .with_translation(
+                            board.cell_transform(&square).extend(1.0)
+                                + Vec3::new(-board.scale / 2., board.scale / 2., 0.),
+                        ),
                     ..default()
                 },
                 PickableBundle::default(),
