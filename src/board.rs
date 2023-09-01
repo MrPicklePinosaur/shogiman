@@ -63,33 +63,34 @@ impl Plugin for BoardPlugin {
 fn render_game_board(
     mut cmd: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<BoardMaterial>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     board: Res<Board>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad {
-        size: Vec2::splat(board.scale * 9.),
+        size: Vec2::splat(board.scale),
         ..default()
     }));
 
-    let cell_colors: [u32; 81] = [0; 81];
+    let material = materials.add(ColorMaterial {
+        color: Color::BEIGE,
+        ..default()
+    });
 
-    cmd.spawn((
-        MaterialMesh2dBundle {
-            mesh: mesh_handle.into(),
-            material: materials.add(BoardMaterial {
-                base_color: Color::BEIGE,
-                grid_color: Color::BLUE,
-                rows: 9,
-                columns: 9,
-                // cell_colors,
-            }),
-            ..default()
-        },
-        PickableBundle::default(),
-        RaycastPickTarget::default(),
-        On::<Pointer<Move>>::run(on_hover),
-        On::<Pointer<Click>>::run(on_click),
-    ));
+    // TODO would be cool to batch this
+    for square in Square::iter() {
+        cmd.spawn((
+            MaterialMesh2dBundle {
+                mesh: mesh_handle.clone().into(),
+                material: material.clone(),
+                transform: Transform::from_translation(board.cell_transform(&square).extend(0.)),
+                ..default()
+            },
+            PickableBundle::default(),
+            RaycastPickTarget::default(),
+            On::<Pointer<Move>>::run(on_hover),
+            On::<Pointer<Click>>::run(on_click),
+        ));
+    }
 }
 
 fn highlight_board(
@@ -113,7 +114,7 @@ fn on_hover(evt: Listener<Pointer<Move>>, q: Query<(Entity, &Transform)>, board:
             // hit position with bottom right as handle
             let offset_trans = local_trans.truncate() + Vec2::splat(board.scale * 9. / 2.);
 
-            debug!("local {offset_trans:?}");
+            // debug!("local {offset_trans:?}");
 
             // NOTE need to convert to shogi coords (top right) if we need to interact with the
             // board state
