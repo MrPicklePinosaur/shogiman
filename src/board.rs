@@ -19,6 +19,11 @@ pub struct CellHighlighter {
     pub is_move_target: bool,
 }
 
+/// Represents which piece the player is currently considering on placing onto the board as well as
+/// where the piece is
+#[derive(Debug, Resource, Default, Deref, DerefMut)]
+pub struct Hand(pub Option<(Piece, Square)>);
+
 #[derive(Debug, Resource)]
 pub struct Board {
     pub state: Position,
@@ -77,6 +82,7 @@ impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Board>()
             .init_resource::<ColorPalette>()
+            .init_resource::<Hand>()
             .add_systems(Startup, (init_materials, init_game_board, init_game_pieces))
             .add_systems(
                 Update,
@@ -189,35 +195,58 @@ fn on_click(
     evt: Listener<Pointer<Click>>,
     q: Query<(Entity, &BoardSquare)>,
     mut q_hl: Query<(Entity, &mut CellHighlighter)>,
-    board: Res<Board>,
+    mut board: ResMut<Board>,
+    mut hand: ResMut<Hand>,
 ) {
-    debug!("on hover event {evt:?}");
-
     // fetch the piece that is in the square
     // TODO failable systems would be nice
     let board_square = q.get_component::<BoardSquare>(evt.target).unwrap();
-    if let Some(piece) = board.state.piece_at(**board_square) {
-        debug!("clicked on {piece:?}");
 
-        debug!("the side to move is {:?}", board.state.side_to_move());
+    // clear highlighting on all square first
+    for (_, mut hl) in &mut q_hl {
+        hl.is_move_target = false;
+    }
 
-        debug!("sqaure {board_square:?} piece {piece:?}");
+    // if we have a piece in our hand and we clicked on a valid move spot, move the piece
+    if let Some((piece, original_square)) = **hand {
+        // TODO maybe check if it's the players turn
 
-        // draw an indictor for where the piece is allowed to move
-        let moves = board.state.move_candidates(**board_square, *piece);
-
-        // clear highlighting on all square first
-        for (_, mut hl) in &mut q_hl {
-            hl.is_move_target = false;
+        let next_move = shogi::Move::Normal {
+            from: original_square,
+            to: **board_square,
+            promote: false,
+        };
+        if let Err(err) = board.state.make_move(next_move) {
+            warn!("move error {err:?}");
         }
 
-        // highlight squares
-        for square in moves.into_iter() {
-            let square_entity = board.index_to_entity.get(&square.index()).unwrap();
-            let mut target_square = q_hl
-                .get_component_mut::<CellHighlighter>(*square_entity)
-                .unwrap();
-            target_square.is_move_target = true;
+        **hand = None;
+    } else {
+        // otherwise place the piece in our hand and display potential moves
+        if let Some(piece) = board.state.piece_at(**board_square) {
+            debug!("clicked on {piece:?}");
+
+            debug!("the side to move is {:?}", board.state.side_to_move());
+
+            debug!("sqaure {board_square:?} piece {piece:?}");
+
+            // draw an indictor for where the piece is allowed to move
+            let moves = board.state.move_candidates(**board_square, *piece);
+
+            // highlight squares
+            for square in moves.into_iter() {
+                let square_entity = board.index_to_entity.get(&square.index()).unwrap();
+                let mut target_square = q_hl
+                    .get_component_mut::<CellHighlighter>(*square_entity)
+                    .unwrap();
+                target_square.is_move_target = true;
+            }
+
+            // Pick up piece to move
+            // TODO hardcode player to be black player for now
+            if board.state.side_to_move() == shogi::Color::Black {
+                *hand = Hand(Some((*piece, **board_square)));
+            }
         }
     }
 }
