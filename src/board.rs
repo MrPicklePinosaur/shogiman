@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::{
     input::keyboard::KeyboardInput, prelude::*, render::extract_resource::ExtractResource,
     sprite::MaterialMesh2dBundle,
@@ -21,6 +23,8 @@ pub struct CellHighlighter {
 pub struct Board {
     pub state: Position,
     pub scale: f32,
+    /// Access cell entity given sqaure index
+    pub index_to_entity: HashMap<usize, Entity>,
 }
 
 #[derive(Debug, Resource, Default)]
@@ -45,6 +49,7 @@ impl Default for Board {
         Board {
             state: pos,
             scale: 32.,
+            index_to_entity: HashMap::default(),
         }
     }
 }
@@ -72,10 +77,7 @@ impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Board>()
             .init_resource::<ColorPalette>()
-            .add_systems(
-                Startup,
-                (init_materials, render_game_board, render_game_pieces),
-            )
+            .add_systems(Startup, (init_materials, init_game_board, init_game_pieces))
             .add_systems(
                 Update,
                 (
@@ -108,11 +110,11 @@ fn init_materials(
     });
 }
 
-fn render_game_board(
+fn init_game_board(
     mut cmd: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     color_palette: Res<ColorPalette>,
-    board: Res<Board>,
+    mut board: ResMut<Board>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad {
         size: Vec2::splat(board.scale),
@@ -140,6 +142,8 @@ fn render_game_board(
                 CellHighlighter::default(),
             ))
             .id();
+
+        board.index_to_entity.insert(square.index(), square_entity);
     }
 }
 
@@ -181,7 +185,12 @@ fn cell_highlighter(
     }
 }
 
-fn on_click(evt: Listener<Pointer<Click>>, q: Query<(Entity, &BoardSquare)>, board: Res<Board>) {
+fn on_click(
+    evt: Listener<Pointer<Click>>,
+    q: Query<(Entity, &BoardSquare)>,
+    mut q_hl: Query<(Entity, &mut CellHighlighter)>,
+    board: Res<Board>,
+) {
     debug!("on hover event {evt:?}");
 
     // fetch the piece that is in the square
@@ -197,13 +206,23 @@ fn on_click(evt: Listener<Pointer<Click>>, q: Query<(Entity, &BoardSquare)>, boa
         // draw an indictor for where the piece is allowed to move
         let moves = board.state.move_candidates(**board_square, *piece);
 
+        // clear highlighting on all square first
+        for (_, mut hl) in &mut q_hl {
+            hl.is_move_target = false;
+        }
+
+        // highlight squares
         for square in moves.into_iter() {
-            debug!("square {square:?}");
+            let square_entity = board.index_to_entity.get(&square.index()).unwrap();
+            let mut target_square = q_hl
+                .get_component_mut::<CellHighlighter>(*square_entity)
+                .unwrap();
+            target_square.is_move_target = true;
         }
     }
 }
 
-fn render_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
+fn init_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
     // TODO make board resource that gets us position from file and rank
 
     for square in Square::iter() {
