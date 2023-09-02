@@ -8,8 +8,6 @@ use bevy_mod_picking::prelude::*;
 use bevy_svg::prelude::*;
 use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
 
-use crate::materials::BoardMaterial;
-
 /// Use to decide what color the cell should be
 #[derive(Debug, Component, Default)]
 pub struct CellHighlighter {
@@ -87,9 +85,7 @@ impl Plugin for BoardPlugin {
             .add_systems(
                 Update,
                 (
-                    board_gizmo,
-                    highlight_board
-                        .run_if(|input: Res<Input<KeyCode>>| input.just_pressed(KeyCode::P)),
+                    // board_gizmo,
                     cell_highlighter,
                 ),
             );
@@ -150,18 +146,6 @@ fn init_game_board(
             .id();
 
         board.index_to_entity.insert(square.index(), square_entity);
-    }
-}
-
-fn highlight_board(
-    mut q: Query<&mut Handle<BoardMaterial>>,
-    mut materials: ResMut<Assets<BoardMaterial>>,
-) {
-    debug!("P pressed");
-    for mut mat_handle in q.iter_mut() {
-        if let Some(mat) = materials.get_mut(&mut *mat_handle) {
-            mat.base_color = Color::RED;
-        }
     }
 }
 
