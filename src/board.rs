@@ -1,12 +1,35 @@
 use std::collections::HashMap;
 
 use bevy::{
-    input::keyboard::KeyboardInput, prelude::*, render::extract_resource::ExtractResource,
-    sprite::MaterialMesh2dBundle,
+    ecs::query::Has, input::keyboard::KeyboardInput, prelude::*,
+    render::extract_resource::ExtractResource, sprite::MaterialMesh2dBundle,
 };
 use bevy_mod_picking::prelude::*;
 use bevy_svg::prelude::*;
 use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
+
+#[derive(Debug, Event)]
+pub struct PieceMoveEvent {
+    pub piece_id: PieceId,
+    pub to: Square,
+}
+
+impl PieceMoveEvent {
+    pub fn to(&self) -> Square {
+        self.to
+    }
+    pub fn from(&self) -> Square {
+        self.piece_id.square
+    }
+}
+
+// #[derive(Debug)]
+// pub enum PieceEventType {
+//     Moved {
+//         from: Square,
+//         to: Square
+//     }
+// }
 
 /// Use to decide what color the cell should be
 #[derive(Debug, Component, Default)]
@@ -17,17 +40,32 @@ pub struct CellHighlighter {
     pub is_move_target: bool,
 }
 
+/// Identifier for a piece
+#[derive(Debug, Component, PartialEq, Eq)]
+pub struct PieceId {
+    pub piece: Piece,
+    pub square: Square,
+}
+
+impl PieceId {
+    pub fn new(piece: Piece, square: Square) -> Self {
+        PieceId { piece, square }
+    }
+}
+
 /// Represents which piece the player is currently considering on placing onto the board as well as
 /// where the piece is
 #[derive(Debug, Resource, Default, Deref, DerefMut)]
-pub struct Hand(pub Option<(Piece, Square)>);
+pub struct Hand(pub Option<PieceId>);
 
 #[derive(Debug, Resource)]
 pub struct Board {
     pub state: Position,
     pub scale: f32,
     /// Access cell entity given sqaure index
-    pub index_to_entity: HashMap<usize, Entity>,
+    pub index_to_cell_entity: HashMap<usize, Entity>,
+    /// Access a piece entity given a square index
+    pub index_to_piece_entity: HashMap<usize, Entity>,
 }
 
 #[derive(Debug, Resource, Default)]
@@ -52,7 +90,8 @@ impl Default for Board {
         Board {
             state: pos,
             scale: 32.,
-            index_to_entity: HashMap::default(),
+            index_to_cell_entity: HashMap::default(),
+            index_to_piece_entity: HashMap::default(),
         }
     }
 }
@@ -81,12 +120,14 @@ impl Plugin for BoardPlugin {
         app.init_resource::<Board>()
             .init_resource::<ColorPalette>()
             .init_resource::<Hand>()
+            .add_event::<PieceMoveEvent>()
             .add_systems(Startup, (init_materials, init_game_board, init_game_pieces))
             .add_systems(
                 Update,
                 (
                     // board_gizmo,
                     cell_highlighter,
+                    piece_move_animator,
                 ),
             );
     }
@@ -145,7 +186,9 @@ fn init_game_board(
             ))
             .id();
 
-        board.index_to_entity.insert(square.index(), square_entity);
+        board
+            .index_to_cell_entity
+            .insert(square.index(), square_entity);
     }
 }
 
@@ -181,6 +224,7 @@ fn on_click(
     mut q_hl: Query<(Entity, &mut CellHighlighter)>,
     mut board: ResMut<Board>,
     mut hand: ResMut<Hand>,
+    mut evw_piece_move: EventWriter<PieceMoveEvent>,
 ) {
     // fetch the piece that is in the square
     // TODO failable systems would be nice
@@ -192,11 +236,11 @@ fn on_click(
     }
 
     // if we have a piece in our hand and we clicked on a valid move spot, move the piece
-    if let Some((piece, original_square)) = **hand {
+    if let Some(PieceId { piece, square }) = **hand {
         // TODO maybe check if it's the players turn
 
         let next_move = shogi::Move::Normal {
-            from: original_square,
+            from: square,
             to: **board_square,
             promote: false,
         };
@@ -205,6 +249,12 @@ fn on_click(
         }
 
         **hand = None;
+
+        // send event that we moved this piece
+        evw_piece_move.send(PieceMoveEvent {
+            piece_id: PieceId { piece, square },
+            to: **board_square,
+        });
     } else {
         // otherwise place the piece in our hand and display potential moves
         if let Some(piece) = board.state.piece_at(**board_square) {
@@ -219,7 +269,7 @@ fn on_click(
 
             // highlight squares
             for square in moves.into_iter() {
-                let square_entity = board.index_to_entity.get(&square.index()).unwrap();
+                let square_entity = board.index_to_cell_entity.get(&square.index()).unwrap();
                 let mut target_square = q_hl
                     .get_component_mut::<CellHighlighter>(*square_entity)
                     .unwrap();
@@ -229,36 +279,54 @@ fn on_click(
             // Pick up piece to move
             // TODO hardcode player to be black player for now
             if board.state.side_to_move() == shogi::Color::Black {
-                *hand = Hand(Some((*piece, **board_square)));
+                *hand = Hand(Some(PieceId::new(*piece, **board_square)));
             }
         }
     }
 }
 
-fn init_game_pieces(mut cmd: Commands, board: Res<Board>, server: Res<AssetServer>) {
-    // TODO make board resource that gets us position from file and rank
-
+// TODO make board resource that gets us position from file and rank
+fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<AssetServer>) {
     for square in Square::iter() {
         if let Some(piece) = board.state.piece_at(square) {
             let handle = server.load(format!("sprites/{}", piece_to_sprite(piece)));
 
-            cmd.spawn((
-                Svg2dBundle {
-                    svg: handle,
-                    origin: Origin::TopLeft,
-                    transform: Transform::default()
-                        // TODO proper 2d render order
-                        .with_translation(
-                            board.cell_transform(&square).extend(1.0)
-                                + Vec3::new(-board.scale / 2., board.scale / 2., 0.),
-                        ),
-                    ..default()
-                },
-                PickableBundle::default(),
-                RaycastPickTarget::default(),
-                // On::<Pointer<Drag>>::target_component_mut::<Transform>(|drag, transform| {
-                // }),
-            ));
+            let piece_id = cmd
+                .spawn((
+                    Svg2dBundle {
+                        svg: handle,
+                        origin: Origin::TopLeft,
+                        transform: Transform::default()
+                            // TODO proper 2d render order
+                            .with_translation(
+                                board.cell_transform(&square).extend(1.0)
+                                    + Vec3::new(-board.scale / 2., board.scale / 2., 0.),
+                            ),
+                        ..default()
+                    },
+                    PickableBundle::default(),
+                    RaycastPickTarget::default(),
+                    PieceId::new(*piece, square),
+                    // On::<Pointer<Drag>>::target_component_mut::<Transform>(|drag, transform| {
+                    // }),
+                ))
+                .id();
+
+            board.index_to_piece_entity.insert(square.index(), piece_id);
+        }
+    }
+}
+
+/// Animate the piece moves
+fn piece_move_animator(
+    mut evr_piece_move: EventReader<PieceMoveEvent>,
+    q: Query<(Entity, &PieceId)>,
+) {
+    for ev in evr_piece_move.iter() {
+        for (entity, piece_id) in &q {
+            if *piece_id == ev.piece_id {
+                debug!("move event for {entity:?}");
+            }
         }
     }
 }
