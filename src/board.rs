@@ -25,13 +25,9 @@ impl PieceMoveEvent {
     }
 }
 
-// #[derive(Debug)]
-// pub enum PieceEventType {
-//     Moved {
-//         from: Square,
-//         to: Square
-//     }
-// }
+/// Event when a player gets to start their turn
+#[derive(Debug, Event, Deref, DerefMut, PartialEq, Eq)]
+pub struct TurnChangedEvent(pub shogi::Color);
 
 /// Use to decide what color the cell should be
 #[derive(Debug, Component, Default)]
@@ -121,6 +117,7 @@ impl Plugin for BoardPlugin {
             .init_resource::<ColorPalette>()
             .init_resource::<Hand>()
             .add_event::<PieceMoveEvent>()
+            .add_event::<TurnChangedEvent>()
             .add_systems(Startup, (init_materials, init_game_board, init_game_pieces))
             .add_systems(
                 Update,
@@ -128,6 +125,7 @@ impl Plugin for BoardPlugin {
                     // board_gizmo,
                     cell_highlighter,
                     piece_move_animator,
+                    computer_move,
                 ),
             );
     }
@@ -225,6 +223,7 @@ fn on_click(
     mut board: ResMut<Board>,
     mut hand: ResMut<Hand>,
     mut evw_piece_move: EventWriter<PieceMoveEvent>,
+    mut evw_turn_changed: EventWriter<TurnChangedEvent>,
 ) {
     // fetch the piece that is in the square
     // TODO failable systems would be nice
@@ -255,6 +254,9 @@ fn on_click(
             piece_id: PieceId { piece, square },
             to: **board_square,
         });
+
+        // TODO hardcoded for now
+        evw_turn_changed.send(TurnChangedEvent(shogi::Color::White));
     } else {
         // otherwise place the piece in our hand and display potential moves
         if let Some(piece) = board.state.piece_at(**board_square) {
@@ -346,6 +348,73 @@ fn piece_move_animator(
 
                 cmd.entity(entity).insert(Animator::new(tween));
             }
+        }
+    }
+}
+
+fn computer_move(
+    mut board: ResMut<Board>,
+    mut evr_turn_changed: EventReader<TurnChangedEvent>,
+    mut evw_piece_move: EventWriter<PieceMoveEvent>,
+) {
+    for ev in &mut evr_turn_changed {
+        if **ev == shogi::Color::White {
+            debug!("computer's move");
+
+            // Do fancy stuff to decide the next move
+
+            // for now we do a random algorithm
+
+            // choose a random piece that is able to move
+
+            use rand::seq::SliceRandom;
+
+            let bb = board.state.player_bb(shogi::Color::White);
+            let mut shuffled_pieces = bb.into_iter().collect::<Vec<_>>();
+            shuffled_pieces.shuffle(&mut rand::thread_rng());
+
+            let Some((piece, from, to)) = shuffled_pieces.iter().find_map(|square| {
+                let piece = board.state.piece_at(*square).unwrap();
+                let mut moves = board
+                    .state
+                    .move_candidates(*square, piece)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if !moves.is_empty() {
+                    // select a random move to make
+                    moves.shuffle(&mut rand::thread_rng());
+                    let random_move = moves.iter().next().unwrap().clone();
+
+                    Some((piece, *square, random_move))
+                } else {
+                    None
+                }
+            }) else {
+                error!("no moves for computer to make");
+                return;
+            };
+            debug!("computer's move {piece:?} {from:?} {to:?}");
+
+            // TODO this code is pretty duplicate
+            let next_move = shogi::Move::Normal {
+                from,
+                to,
+                promote: false,
+            };
+            if let Err(err) = board.state.make_move(next_move) {
+                warn!("move error {err:?}");
+            }
+
+            // send event that we moved this piece
+            evw_piece_move.send(PieceMoveEvent {
+                piece_id: PieceId {
+                    piece,
+                    square: from,
+                },
+                to,
+            });
+
+            // evw_turn_changed.send(TurnChangedEvent(shogi::Color::Black));
         }
     }
 }

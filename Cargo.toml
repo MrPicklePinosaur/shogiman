@@ -19,6 +19,8 @@ shogi = { version = "0.12" }
 
 anyhow = { version = "1" }
 
+rand = "0.8"
+
 [dependencies.bevy]
 version = "0.11"
 default-features = false
