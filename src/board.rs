@@ -293,20 +293,26 @@ fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<Ass
 
             let piece_id = cmd
                 .spawn((
-                    Svg2dBundle {
-                        svg: handle,
-                        origin: Origin::TopLeft,
-                        transform: Transform::default()
-                            // TODO proper 2d render order
-                            .with_translation(piece_svg_offset(board.cell_transform(&square))),
-                        ..default()
-                    },
+                    // TODO define actual layers
+                    TransformBundle::from_transform(
+                        Transform::default()
+                            .with_translation(board.cell_transform(&square).extend(1.)),
+                    ),
+                    VisibilityBundle::default(),
                     PickableBundle::default(),
                     RaycastPickTarget::default(),
                     PieceId::new(*piece, square),
                     // On::<Pointer<Drag>>::target_component_mut::<Transform>(|drag, transform| {
                     // }),
                 ))
+                .with_children(|parent| {
+                    parent.spawn((Svg2dBundle {
+                        svg: handle,
+                        transform: Transform::from_xyz(-BOARD_SCALE / 2., BOARD_SCALE / 2., 0.),
+                        origin: Origin::TopLeft,
+                        ..default()
+                    },));
+                })
                 .id();
 
             board.index_to_piece_entity.insert(square.index(), piece_id);
@@ -332,8 +338,8 @@ fn piece_move_animator(
                     EaseFunction::QuadraticInOut,
                     Duration::from_secs(1),
                     TransformPositionLens {
-                        start: piece_svg_offset(board.cell_transform(&ev.from())),
-                        end: piece_svg_offset(board.cell_transform(&ev.to())),
+                        start: board.cell_transform(&ev.from()).extend(1.),
+                        end: board.cell_transform(&ev.to()).extend(1.),
                     },
                 )
                 .with_repeat_count(1);
@@ -348,12 +354,6 @@ fn board_gizmo(mut gizmos: Gizmos, board: Res<Board>) {
     for square in Square::iter() {
         gizmos.circle_2d(board.cell_transform(&square), 10., Color::RED);
     }
-}
-
-/// Temp solution since we need to offcenter the position of svgs to make it line up nice on the
-/// grid
-fn piece_svg_offset(pos: Vec2) -> Vec3 {
-    pos.extend(1.) + Vec3::new(-BOARD_SCALE / 2., BOARD_SCALE / 2., 0.)
 }
 
 /// Map the piece to the correct sprite to use
