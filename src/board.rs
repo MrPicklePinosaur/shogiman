@@ -10,10 +10,11 @@ use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
 
 const BOARD_SCALE: f32 = 32.;
 
-#[derive(Debug, Event)]
+#[derive(Debug, Event, Clone)]
 pub struct PieceMoveEvent {
     pub piece_id: PieceId,
     pub to: Square,
+    pub captured: Option<PieceId>,
 }
 
 impl PieceMoveEvent {
@@ -22,6 +23,18 @@ impl PieceMoveEvent {
     }
     pub fn from(&self) -> Square {
         self.piece_id.square
+    }
+    pub fn piece(&self) -> Piece {
+        self.piece_id.piece
+    }
+}
+
+#[derive(Debug, Event, Deref, DerefMut)]
+pub struct PieceCapturedEvent(pub PieceId);
+
+impl PieceCapturedEvent {
+    pub fn captured_by(&self) -> shogi::Color {
+        self.0.piece.color.flip()
     }
 }
 
@@ -39,7 +52,7 @@ pub struct CellHighlighter {
 }
 
 /// Identifier for a piece
-#[derive(Debug, Component, PartialEq, Eq)]
+#[derive(Debug, Component, PartialEq, Eq, Clone)]
 pub struct PieceId {
     pub piece: Piece,
     pub square: Square,
@@ -61,8 +74,6 @@ pub struct Board {
     pub state: Position,
     /// Access cell entity given sqaure index
     pub index_to_cell_entity: HashMap<usize, Entity>,
-    /// Access a piece entity given a square index
-    pub index_to_piece_entity: HashMap<usize, Entity>,
 }
 
 #[derive(Debug, Resource, Default)]
@@ -87,7 +98,6 @@ impl Default for Board {
         Board {
             state: pos,
             index_to_cell_entity: HashMap::default(),
-            index_to_piece_entity: HashMap::default(),
         }
     }
 }
@@ -117,6 +127,7 @@ impl Plugin for BoardPlugin {
             .init_resource::<ColorPalette>()
             .init_resource::<Hand>()
             .add_event::<PieceMoveEvent>()
+            .add_event::<PieceCapturedEvent>()
             .add_event::<TurnChangedEvent>()
             .add_systems(Startup, (init_materials, init_game_board, init_game_pieces))
             .add_systems(
@@ -223,6 +234,7 @@ fn on_click(
     mut board: ResMut<Board>,
     mut hand: ResMut<Hand>,
     mut evw_piece_move: EventWriter<PieceMoveEvent>,
+    mut evw_piece_captured: EventWriter<PieceCapturedEvent>,
     mut evw_turn_changed: EventWriter<TurnChangedEvent>,
 ) {
     // fetch the piece that is in the square
@@ -238,24 +250,21 @@ fn on_click(
     if let Some(PieceId { piece, square }) = **hand {
         // TODO maybe check if it's the players turn
 
-        let next_move = shogi::Move::Normal {
-            from: square,
-            to: **board_square,
-            promote: false,
-        };
-        if let Err(err) = board.state.make_move(next_move) {
-            warn!("move error {err:?}");
-            **hand = None;
-            return;
-        }
-
         **hand = None;
 
+        let ev = match move_piece(&mut board, piece, square, **board_square) {
+            Ok(ev) => ev,
+            Err(e) => {
+                warn!("player move error {e:?}");
+                return;
+            },
+        };
+
         // send event that we moved this piece
-        evw_piece_move.send(PieceMoveEvent {
-            piece_id: PieceId { piece, square },
-            to: **board_square,
-        });
+        evw_piece_move.send(ev.clone());
+        if let Some(captured_piece) = ev.captured {
+            evw_piece_captured.send(PieceCapturedEvent(captured_piece));
+        }
 
         // TODO hardcoded for now
         evw_turn_changed.send(TurnChangedEvent(shogi::Color::White));
@@ -289,6 +298,45 @@ fn on_click(
     }
 }
 
+/// Helper that does common logic when moving a piece
+fn move_piece(
+    board: &mut Board,
+    piece: Piece,
+    from: Square,
+    to: Square,
+) -> anyhow::Result<PieceMoveEvent> {
+    // Check if a piece was captured
+    let captured = if let Some(target_piece) = board.state.piece_at(to) {
+        if target_piece.color == piece.color {
+            return Err(anyhow::anyhow!("Piece captured piece of own color"));
+        }
+        Some(PieceId {
+            piece: *target_piece,
+            square: to,
+        })
+    } else {
+        None
+    };
+
+    let next_move = shogi::Move::Normal {
+        from,
+        to,
+        promote: false,
+    };
+    if let Err(err) = board.state.make_move(next_move) {
+        return Err(anyhow::anyhow!("move error {err:?}"));
+    }
+
+    Ok(PieceMoveEvent {
+        piece_id: PieceId {
+            piece,
+            square: from,
+        },
+        to,
+        captured,
+    })
+}
+
 // TODO make board resource that gets us position from file and rank
 fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<AssetServer>) {
     for square in Square::iter() {
@@ -318,8 +366,6 @@ fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<Ass
                     },));
                 })
                 .id();
-
-            board.index_to_piece_entity.insert(square.index(), piece_id);
         }
     }
 }
@@ -357,6 +403,7 @@ fn piece_move_animator(
 fn computer_move(
     mut board: ResMut<Board>,
     mut evr_turn_changed: EventReader<TurnChangedEvent>,
+    mut evw_piece_captured: EventWriter<PieceCapturedEvent>,
     mut evw_piece_move: EventWriter<PieceMoveEvent>,
 ) {
     for ev in &mut evr_turn_changed {
@@ -393,31 +440,41 @@ fn computer_move(
                 }
             }) else {
                 error!("no moves for computer to make");
-                return;
+                continue;
             };
             debug!("computer's move {piece:?} {from:?} {to:?}");
 
-            // TODO this code is pretty duplicate
-            let next_move = shogi::Move::Normal {
-                from,
-                to,
-                promote: false,
+            let ev = match move_piece(&mut board, piece, from, to) {
+                Ok(ev) => ev,
+                Err(e) => {
+                    warn!("player computer move error {e:?}");
+                    continue;
+                },
             };
-            if let Err(err) = board.state.make_move(next_move) {
-                warn!("computer move error {err:?}");
-                return;
-            }
 
             // send event that we moved this piece
-            evw_piece_move.send(PieceMoveEvent {
-                piece_id: PieceId {
-                    piece,
-                    square: from,
-                },
-                to,
-            });
+            evw_piece_move.send(ev.clone());
+            if let Some(captured_piece) = ev.captured {
+                evw_piece_captured.send(PieceCapturedEvent(captured_piece));
+            }
 
             // evw_turn_changed.send(TurnChangedEvent(shogi::Color::Black));
+        }
+    }
+}
+
+/// Also in charge of removing the piece from board
+fn piece_captured_animator(
+    mut cmd: Commands,
+    mut evr_piece_captured: EventReader<PieceCapturedEvent>,
+    q: Query<(Entity, &PieceId)>,
+) {
+    for ev in &mut evr_piece_captured {
+        for (entity, piece_id) in &q {
+            if *piece_id == ev.0 {
+                // Just remove the sprite for now
+                cmd.entity(entity).despawn();
+            }
         }
     }
 }
