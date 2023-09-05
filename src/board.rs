@@ -10,11 +10,30 @@ use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
 
 const BOARD_SCALE: f32 = 32.;
 
+/// Request for a piece to move (up to handler to decide if valid)
+#[derive(Debug, Event, Clone)]
+pub struct PieceMoveRequestEvent {
+    pub piece_id: PieceId,
+    pub to: Square,
+}
+
+impl PieceMoveRequestEvent {
+    pub fn to(&self) -> Square {
+        self.to
+    }
+    pub fn from(&self) -> Square {
+        self.piece_id.square
+    }
+    pub fn piece(&self) -> Piece {
+        self.piece_id.piece
+    }
+}
+
+/// Fired when a piece is actually allowed to move
 #[derive(Debug, Event, Clone)]
 pub struct PieceMoveEvent {
     pub piece_id: PieceId,
     pub to: Square,
-    pub captured: Option<PieceId>,
 }
 
 impl PieceMoveEvent {
@@ -126,6 +145,7 @@ impl Plugin for BoardPlugin {
         app.init_resource::<Board>()
             .init_resource::<ColorPalette>()
             .init_resource::<Hand>()
+            .add_event::<PieceMoveRequestEvent>()
             .add_event::<PieceMoveEvent>()
             .add_event::<PieceCapturedEvent>()
             .add_event::<TurnChangedEvent>()
@@ -135,7 +155,9 @@ impl Plugin for BoardPlugin {
                 (
                     // board_gizmo,
                     cell_highlighter,
+                    piece_move_handler,
                     piece_move_animator,
+                    piece_captured_animator,
                     computer_move,
                 ),
             );
@@ -233,9 +255,7 @@ fn on_click(
     mut q_hl: Query<(Entity, &mut CellHighlighter)>,
     mut board: ResMut<Board>,
     mut hand: ResMut<Hand>,
-    mut evw_piece_move: EventWriter<PieceMoveEvent>,
-    mut evw_piece_captured: EventWriter<PieceCapturedEvent>,
-    mut evw_turn_changed: EventWriter<TurnChangedEvent>,
+    mut evw_piece_move_request: EventWriter<PieceMoveRequestEvent>,
 ) {
     // fetch the piece that is in the square
     // TODO failable systems would be nice
@@ -247,27 +267,15 @@ fn on_click(
     }
 
     // if we have a piece in our hand and we clicked on a valid move spot, move the piece
-    if let Some(PieceId { piece, square }) = **hand {
+    if let Some(piece_id) = hand.0.clone() {
         // TODO maybe check if it's the players turn
 
         **hand = None;
 
-        let ev = match move_piece(&mut board, piece, square, **board_square) {
-            Ok(ev) => ev,
-            Err(e) => {
-                warn!("player move error {e:?}");
-                return;
-            },
-        };
-
-        // send event that we moved this piece
-        evw_piece_move.send(ev.clone());
-        if let Some(captured_piece) = ev.captured {
-            evw_piece_captured.send(PieceCapturedEvent(captured_piece));
-        }
-
-        // TODO hardcoded for now
-        evw_turn_changed.send(TurnChangedEvent(shogi::Color::White));
+        evw_piece_move_request.send(PieceMoveRequestEvent {
+            piece_id: piece_id.clone(),
+            to: **board_square,
+        });
     } else {
         // otherwise place the piece in our hand and display potential moves
         if let Some(piece) = board.state.piece_at(**board_square) {
@@ -299,42 +307,47 @@ fn on_click(
 }
 
 /// Helper that does common logic when moving a piece
-fn move_piece(
-    board: &mut Board,
-    piece: Piece,
-    from: Square,
-    to: Square,
-) -> anyhow::Result<PieceMoveEvent> {
-    // Check if a piece was captured
-    let captured = if let Some(target_piece) = board.state.piece_at(to) {
-        if target_piece.color == piece.color {
-            return Err(anyhow::anyhow!("Piece captured piece of own color"));
+fn piece_move_handler(
+    mut board: ResMut<Board>,
+    mut evr_piece_move_request: EventReader<PieceMoveRequestEvent>,
+    mut evw_piece_move: EventWriter<PieceMoveEvent>,
+    mut evw_piece_captured: EventWriter<PieceCapturedEvent>,
+    mut evw_turn_changed: EventWriter<TurnChangedEvent>,
+) {
+    for ev in &mut evr_piece_move_request {
+        // Check if a piece was captured
+        if let Some(target_piece) = board.state.piece_at(ev.to()) {
+            if target_piece.color == ev.piece().color {
+                warn!("Piece captured piece of own color");
+                continue;
+            }
+            debug!("Piece captured {target_piece:?}");
+            evw_piece_captured.send(PieceCapturedEvent(PieceId {
+                piece: *target_piece,
+                square: ev.to(),
+            }));
         }
-        Some(PieceId {
-            piece: *target_piece,
-            square: to,
-        })
-    } else {
-        None
-    };
 
-    let next_move = shogi::Move::Normal {
-        from,
-        to,
-        promote: false,
-    };
-    if let Err(err) = board.state.make_move(next_move) {
-        return Err(anyhow::anyhow!("move error {err:?}"));
+        let next_move = shogi::Move::Normal {
+            from: ev.from(),
+            to: ev.to(),
+            promote: false,
+        };
+        if let Err(err) = board.state.make_move(next_move) {
+            warn!("move error {err:?}");
+            continue;
+        }
+
+        evw_piece_move.send(PieceMoveEvent {
+            piece_id: PieceId {
+                piece: ev.piece(),
+                square: ev.from(),
+            },
+            to: ev.to(),
+        });
+
+        evw_turn_changed.send(TurnChangedEvent(board.state.side_to_move()));
     }
-
-    Ok(PieceMoveEvent {
-        piece_id: PieceId {
-            piece,
-            square: from,
-        },
-        to,
-        captured,
-    })
 }
 
 // TODO make board resource that gets us position from file and rank
@@ -403,8 +416,7 @@ fn piece_move_animator(
 fn computer_move(
     mut board: ResMut<Board>,
     mut evr_turn_changed: EventReader<TurnChangedEvent>,
-    mut evw_piece_captured: EventWriter<PieceCapturedEvent>,
-    mut evw_piece_move: EventWriter<PieceMoveEvent>,
+    mut evw_piece_move_request: EventWriter<PieceMoveRequestEvent>,
 ) {
     for ev in &mut evr_turn_changed {
         if **ev == shogi::Color::White {
@@ -444,21 +456,13 @@ fn computer_move(
             };
             debug!("computer's move {piece:?} {from:?} {to:?}");
 
-            let ev = match move_piece(&mut board, piece, from, to) {
-                Ok(ev) => ev,
-                Err(e) => {
-                    warn!("player computer move error {e:?}");
-                    continue;
+            evw_piece_move_request.send(PieceMoveRequestEvent {
+                piece_id: PieceId {
+                    piece,
+                    square: from,
                 },
-            };
-
-            // send event that we moved this piece
-            evw_piece_move.send(ev.clone());
-            if let Some(captured_piece) = ev.captured {
-                evw_piece_captured.send(PieceCapturedEvent(captured_piece));
-            }
-
-            // evw_turn_changed.send(TurnChangedEvent(shogi::Color::Black));
+                to,
+            });
         }
     }
 }
