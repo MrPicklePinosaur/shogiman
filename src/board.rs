@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use bevy::{
     ecs::query::Has, input::keyboard::KeyboardInput, prelude::*,
@@ -7,6 +7,8 @@ use bevy::{
 use bevy_mod_picking::prelude::*;
 use bevy_svg::prelude::*;
 use shogi::{bitboard::Factory, Piece, PieceType, Position, Square};
+
+const BOARD_SCALE: f32 = 32.;
 
 #[derive(Debug, Event)]
 pub struct PieceMoveEvent {
@@ -61,7 +63,6 @@ pub struct Hand(pub Option<PieceId>);
 #[derive(Debug, Resource)]
 pub struct Board {
     pub state: Position,
-    pub scale: f32,
     /// Access cell entity given sqaure index
     pub index_to_cell_entity: HashMap<usize, Entity>,
     /// Access a piece entity given a square index
@@ -89,7 +90,6 @@ impl Default for Board {
             .unwrap();
         Board {
             state: pos,
-            scale: 32.,
             index_to_cell_entity: HashMap::default(),
             index_to_piece_entity: HashMap::default(),
         }
@@ -99,10 +99,10 @@ impl Default for Board {
 impl Board {
     /// Get the world position of a given square
     pub fn cell_transform(&self, square: &Square) -> Vec2 {
-        let cell_size = self.scale / 2.;
+        let cell_size = BOARD_SCALE / 2.;
 
-        let x = (8. - square.file() as f32) * self.scale - self.scale * 9. / 2. + cell_size;
-        let y = (8. - square.rank() as f32) * self.scale - self.scale * 9. / 2. + cell_size;
+        let x = (8. - square.file() as f32) * BOARD_SCALE - BOARD_SCALE * 9. / 2. + cell_size;
+        let y = (8. - square.rank() as f32) * BOARD_SCALE - BOARD_SCALE * 9. / 2. + cell_size;
         Vec2::new(x, y)
     }
 }
@@ -160,7 +160,7 @@ fn init_game_board(
     mut board: ResMut<Board>,
 ) {
     let mesh_handle = meshes.add(Mesh::from(shape::Quad {
-        size: Vec2::splat(board.scale),
+        size: Vec2::splat(BOARD_SCALE),
         ..default()
     }));
 
@@ -298,10 +298,7 @@ fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<Ass
                         origin: Origin::TopLeft,
                         transform: Transform::default()
                             // TODO proper 2d render order
-                            .with_translation(
-                                board.cell_transform(&square).extend(1.0)
-                                    + Vec3::new(-board.scale / 2., board.scale / 2., 0.),
-                            ),
+                            .with_translation(piece_svg_offset(board.cell_transform(&square))),
                         ..default()
                     },
                     PickableBundle::default(),
@@ -319,13 +316,29 @@ fn init_game_pieces(mut cmd: Commands, mut board: ResMut<Board>, server: Res<Ass
 
 /// Animate the piece moves
 fn piece_move_animator(
+    mut cmd: Commands,
     mut evr_piece_move: EventReader<PieceMoveEvent>,
     q: Query<(Entity, &PieceId)>,
+    board: Res<Board>,
 ) {
+    use bevy_tweening::{lens::*, *};
+
     for ev in evr_piece_move.iter() {
         for (entity, piece_id) in &q {
             if *piece_id == ev.piece_id {
                 debug!("move event for {entity:?}");
+
+                let tween = Tween::new(
+                    EaseFunction::QuadraticInOut,
+                    Duration::from_secs(1),
+                    TransformPositionLens {
+                        start: piece_svg_offset(board.cell_transform(&ev.from())),
+                        end: piece_svg_offset(board.cell_transform(&ev.to())),
+                    },
+                )
+                .with_repeat_count(1);
+
+                cmd.entity(entity).insert(Animator::new(tween));
             }
         }
     }
@@ -335,6 +348,12 @@ fn board_gizmo(mut gizmos: Gizmos, board: Res<Board>) {
     for square in Square::iter() {
         gizmos.circle_2d(board.cell_transform(&square), 10., Color::RED);
     }
+}
+
+/// Temp solution since we need to offcenter the position of svgs to make it line up nice on the
+/// grid
+fn piece_svg_offset(pos: Vec2) -> Vec3 {
+    pos.extend(1.) + Vec3::new(-BOARD_SCALE / 2., BOARD_SCALE / 2., 0.)
 }
 
 /// Map the piece to the correct sprite to use

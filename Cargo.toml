@@ -13,6 +13,7 @@ repository = "https://github.com/MrPicklePinosaur/shogiman"
 
 bevy_mod_picking = { version = "0.15", default-features = false, features = [ "selection", "highlight", "backend_raycast" ] }
 bevy_svg = { version = "0.11.0", default-features = false, features = ["2d"] }
+bevy_tweening = { version = "0.8", default-features = false, features = ["bevy_asset"] }
 
 shogi = { version = "0.12" }
 

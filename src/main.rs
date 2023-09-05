@@ -15,6 +15,7 @@ fn main() {
         .add_plugins((
             bevy_svg::prelude::SvgPlugin,
             bevy_mod_picking::prelude::DefaultPickingPlugins,
+            bevy_tweening::TweeningPlugin,
         ))
         .add_plugins((BoardPlugin))
         .add_systems(Startup, (setup_cam))
