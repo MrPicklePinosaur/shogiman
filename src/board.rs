@@ -245,6 +245,8 @@ fn on_click(
         };
         if let Err(err) = board.state.make_move(next_move) {
             warn!("move error {err:?}");
+            **hand = None;
+            return;
         }
 
         **hand = None;
@@ -402,7 +404,8 @@ fn computer_move(
                 promote: false,
             };
             if let Err(err) = board.state.make_move(next_move) {
-                warn!("move error {err:?}");
+                warn!("computer move error {err:?}");
+                return;
             }
 
             // send event that we moved this piece
